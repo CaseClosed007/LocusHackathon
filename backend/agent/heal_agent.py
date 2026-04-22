@@ -32,7 +32,7 @@ from .prompts import (
     ANALYZE_GITHUB_REPO_PROMPT,
     ADAPT_FOR_LOCUS_PROMPT,
 )
-from models.schemas import AgentThought, LocusDeployPayload
+from models.schemas import AgentThought, BrandContext, LocusDeployPayload
 
 
 GEMINI_MODEL       = os.getenv("GEMINI_MODEL", "gemini-2.5-pro-exp-03-25")
@@ -47,13 +47,32 @@ def _thought(type_: str, message: str, **meta) -> AgentThought:
 def _extract_files(text: str) -> Dict[str, str]:
     """
     Parse <<<FILE: name>>> ... <<<ENDFILE>>> blocks.
-    Used for code-generation and heal responses to avoid JSON-escaping issues.
+    Falls back to greedy split when the response is truncated (no ENDFILE marker).
     """
+    # Primary: strict match with ENDFILE
     pattern = r"<<<FILE:\s*(.+?)>>>\n?(.*?)<<<ENDFILE(?:>>>)?"
     matches = re.findall(pattern, text, re.DOTALL)
-    if not matches:
-        raise ValueError(f"No <<<FILE>>> blocks found in LLM response:\n{text[:400]}")
-    return {name.strip(): content for name, content in matches}
+    if matches:
+        return {name.strip(): content for name, content in matches}
+
+    # Fallback: split on <<<FILE: tags for truncated responses
+    parts = re.split(r"<<<FILE:\s*", text)
+    files: Dict[str, str] = {}
+    for part in parts[1:]:  # first element is text before first tag
+        # Extract filename from first line up to >>>
+        header_end = part.find(">>>")
+        if header_end == -1:
+            continue
+        filename = part[:header_end].strip()
+        content  = part[header_end + 3:].lstrip("\n")
+        # Strip trailing ENDFILE if partially present
+        content  = re.split(r"<<<ENDFILE", content)[0].rstrip()
+        if filename and content:
+            files[filename] = content
+    if files:
+        return files
+
+    raise ValueError(f"No <<<FILE>>> blocks found in LLM response:\n{text[:400]}")
 
 
 def _fix_json_strings(s: str) -> str:
@@ -213,6 +232,7 @@ class HealAgent:
         source_code: Optional[Dict[str, str]] = None,
         github_url: Optional[str] = None,
         max_heal_attempts: int = 3,
+        brand_context: Optional[BrandContext] = None,
     ) -> AsyncGenerator[AgentThought, None]:
 
         # Show Locus wallet balance at start of every run
@@ -247,10 +267,21 @@ class HealAgent:
             config=deploy_config,
         )
 
+        if brand_context:
+            color_preview = "  ".join(brand_context.colors[:4])
+            yield _thought(
+                "action",
+                f"Brand context loaded: **{brand_context.company_name or 'Unknown'}** · "
+                f"`{brand_context.tone or 'N/A'}` tone · {len(brand_context.colors)} colors",
+                brand=brand_context.model_dump(),
+            )
+
         if not source_code:
             yield _thought("thought", "Generating source code with Gemini...")
             try:
-                source_code = await self._generate_code(deploy_config, fast=not is_complex)
+                source_code = await self._generate_code(
+                    deploy_config, fast=not is_complex, brand_context=brand_context
+                )
                 yield _thought(
                     "action",
                     f"Generated: `{', '.join(source_code.keys())}`",
@@ -528,15 +559,95 @@ class HealAgent:
         )
         return _extract_json(text)
 
-    async def _generate_code(self, config: dict, fast: bool = False) -> Dict[str, str]:
+    async def _generate_code(
+        self, config: dict, fast: bool = False, brand_context: Optional[BrandContext] = None
+    ) -> Dict[str, str]:
+        brand_section = ""
+        if brand_context:
+            lines = ["=== BRAND GUIDELINES (apply to every generated file) ==="]
+
+            if brand_context.company_name:
+                lines.append(f"Company: {brand_context.company_name}")
+            if brand_context.tagline:
+                lines.append(f"Tagline: \"{brand_context.tagline}\"")
+            if brand_context.mission:
+                lines.append(f"Mission: {brand_context.mission}")
+            if brand_context.tone:
+                lines.append(f"Tone of voice: {brand_context.tone}")
+            if brand_context.target_audience:
+                lines.append(f"Target audience: {brand_context.target_audience}")
+            if brand_context.ui_style:
+                lines.append(f"Visual style: {brand_context.ui_style}")
+
+            if brand_context.colors:
+                roles = brand_context.color_roles or {}
+                color_lines = []
+                for c in brand_context.colors:
+                    role = roles.get(c, "")
+                    color_lines.append(f"{c} ({role})" if role else c)
+                lines.append(f"Brand colors: {', '.join(color_lines)}")
+
+                # Emit CSS custom properties block
+                css_vars = []
+                role_order = ["primary", "secondary", "accent", "background", "text"]
+                assigned: dict[str, str] = {}
+                for color in brand_context.colors:
+                    role = roles.get(color, "")
+                    if role and role not in assigned:
+                        assigned[role] = color
+                # Fill missing roles by position
+                unnamed = [c for c in brand_context.colors if not roles.get(c)]
+                fallback_roles = [r for r in role_order if r not in assigned]
+                for i, c in enumerate(unnamed[:len(fallback_roles)]):
+                    assigned[fallback_roles[i]] = c
+
+                for role in role_order:
+                    if role in assigned:
+                        css_vars.append(f"  --color-{role}: {assigned[role]};")
+                if css_vars:
+                    lines.append(
+                        "Use these CSS custom properties in :root {}:\n"
+                        + "\n".join(css_vars)
+                    )
+
+            if brand_context.fonts:
+                font_names = [f if isinstance(f, str) else f.get("name", "") for f in brand_context.fonts]  # type: ignore
+                font_names = [f for f in font_names if f]
+                lines.append(f"Typography: {', '.join(font_names)}")
+                google_fonts = "+".join(f.replace(" ", "+") for f in font_names[:2])
+                lines.append(
+                    f"Import via Google Fonts: "
+                    f"https://fonts.googleapis.com/css2?family={google_fonts}&display=swap"
+                )
+
+            if brand_context.keywords:
+                lines.append(f"Brand personality: {', '.join(brand_context.keywords)}")
+
+            if brand_context.design_rules:
+                lines.append("Design rules to follow:")
+                for rule in brand_context.design_rules:
+                    lines.append(f"  - {rule}")
+
+            lines.append(
+                "\nAPPLY ALL OF THE ABOVE: use exact brand colors as CSS variables, "
+                "import and use the specified fonts, reflect the tone in all copy, "
+                "and follow every design rule listed.\n"
+            )
+            brand_section = "\n".join(lines) + "\n"
+
+        # Static sites with brand guidelines need more tokens for full HTML/CSS
+        is_static = config.get("runtime", "") == "static"
+        gen_tokens = 16000 if (is_static or brand_section) else 8192
+
         text = await self._llm(
             GENERATE_CODE_PROMPT.format(
                 description=config.get("description", config.get("name")),
                 runtime=config["runtime"],
                 start_command=config["start_command"],
                 entrypoint=config.get("suggested_entrypoint", "main.py"),
+                brand_section=brand_section,
             ),
-            max_tokens=8192,
+            max_tokens=gen_tokens,
             fast=fast,
         )
         return _extract_files(text)

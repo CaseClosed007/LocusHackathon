@@ -22,7 +22,7 @@ App description: {description}
 Runtime: {runtime}
 Start command: {start_command}
 Entry point file: {entrypoint}
-
+{brand_section}
 Return the files using EXACTLY this block format — one block per file:
 
 <<<FILE: filename>>>

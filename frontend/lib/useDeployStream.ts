@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { AgentThought } from "./types";
+import { AgentThought, BrandContext } from "./types";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 export interface DeployOptions {
   naturalLanguageRequest: string;
-  githubUrl?: string;      // if set, backend uses GitHub route
+  githubUrl?: string;
+  brandContext?: BrandContext;
 }
 
 export function useDeployStream() {
@@ -35,6 +36,9 @@ export function useDeployStream() {
     };
     if (opts.githubUrl) {
       body.github_url = opts.githubUrl;
+    }
+    if (opts.brandContext) {
+      body.brand_context = opts.brandContext;
     }
 
     try {

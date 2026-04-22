@@ -10,15 +10,17 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict
+import os
 
 from agent import HealAgent
 from agent.locus_client import LocusClient
 from agent.github_client import GitHubClient, parse_github_url
+from agent.brand_extractor import extract_brand
 from models.schemas import DeployRequest
 
 
@@ -67,6 +69,7 @@ async def deploy_stream(request: DeployRequest):
             source_code=request.source_code,
             github_url=github_url,
             max_heal_attempts=request.max_heal_attempts,
+            brand_context=request.brand_context,
         ):
             yield sse_event(thought.model_dump())
 
@@ -188,6 +191,31 @@ async def github_meta(url: str):
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc}")
     finally:
         await client.close()
+
+
+@app.post("/brand/extract")
+async def brand_extract(file: UploadFile = File(...)):
+    """
+    Upload a PDF of brand guidelines or a logo image.
+    Returns structured BrandContext (colors, tone, mission, keywords).
+    """
+    allowed = {"pdf", "png", "jpg", "jpeg", "webp"}
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in allowed:
+        raise HTTPException(status_code=422, detail=f"Unsupported file type .{ext}. Use PDF, PNG, or JPG.")
+
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:  # 20 MB cap
+        raise HTTPException(status_code=413, detail="File too large (max 20 MB).")
+
+    model_name = os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash")
+    try:
+        brand = await extract_brand(content, file.filename or f"upload.{ext}", model_name)
+        return brand
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
 
 
 @app.get("/health")

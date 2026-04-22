@@ -13,7 +13,8 @@ import { ThoughtLine } from "./ThoughtLine";
 import { AnimatedBackground } from "./AnimatedBackground";
 import { GitHubPreview } from "./GitHubPreview";
 import { CreditsModal } from "./CreditsModal";
-import { AgentThought } from "@/lib/types";
+import { BrandUploader } from "./BrandUploader";
+import { AgentThought, BrandContext } from "@/lib/types";
 
 // Detect if a string looks like a GitHub repo URL
 function extractGitHubUrl(text: string): string | null {
@@ -412,9 +413,10 @@ function HeroSection({ onSelect }: { onSelect: (t: string) => void }) {
 // ── Main component ───────────────────────────────────────────────────
 
 export default function ChatTerminal() {
-  const [input, setInput]       = useState("");
-  const [history, setHistory]   = useState<Turn[]>([]);
+  const [input, setInput]           = useState("");
+  const [history, setHistory]       = useState<Turn[]>([]);
   const [showCredits, setShowCredits] = useState(false);
+  const [brandContext, setBrandContext] = useState<BrandContext | null>(null);
   const { thoughts, isStreaming, deploy, cancel } = useDeployStream();
   const bottomRef     = useRef<HTMLDivElement>(null);
   const inputRef      = useRef<HTMLTextAreaElement>(null);
@@ -460,11 +462,11 @@ export default function ChatTerminal() {
     setInput("");
     inputRef.current?.focus();
 
-    await deploy(
-      opts?.githubUrl
-        ? { naturalLanguageRequest: msg, githubUrl: opts.githubUrl }
-        : msg,
-    );
+    await deploy({
+      naturalLanguageRequest: msg,
+      ...(opts?.githubUrl ? { githubUrl: opts.githubUrl } : {}),
+      ...(brandContext    ? { brandContext }               : {}),
+    });
   }, [input, isStreaming, deploy]);
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -559,6 +561,13 @@ export default function ChatTerminal() {
         style={{ borderColor: "rgba(255,255,255,0.05)", background: "rgba(3,3,10,0.8)", backdropFilter: "blur(20px)" }}
       >
         <div className="max-w-3xl mx-auto space-y-2">
+          {/* Brand uploader — always visible above input */}
+          <BrandUploader
+            brand={brandContext}
+            onBrandLoaded={setBrandContext}
+            onClear={() => setBrandContext(null)}
+          />
+
           {/* GitHub preview card — shown when a GitHub URL is detected */}
           <AnimatePresence>
             {isGithubMode && detectedGithubUrl && (
@@ -584,6 +593,8 @@ export default function ChatTerminal() {
             style={{
               borderColor: isGithubMode
                 ? "rgba(56,139,253,0.3)"
+                : brandContext
+                ? "rgba(168,85,247,0.35)"
                 : "rgba(255,255,255,0.08)",
               background: "rgba(255,255,255,0.03)",
             }}
@@ -608,6 +619,8 @@ export default function ChatTerminal() {
               placeholder={
                 isStreaming
                   ? "Agent is working..."
+                  : brandContext
+                  ? `Describe what to deploy — brand: ${brandContext.company_name || "loaded"}`
                   : "Describe what to deploy — or paste a GitHub URL"
               }
               rows={1}
