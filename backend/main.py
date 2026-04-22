@@ -21,7 +21,7 @@ from agent import HealAgent
 from agent.locus_client import LocusClient
 from agent.github_client import GitHubClient, parse_github_url
 from agent.brand_extractor import extract_brand
-from models.schemas import DeployRequest
+from models.schemas import DeployRequest, IterateRequest
 
 
 # ── App init ────────────────────────────────────────────────────────────
@@ -103,6 +103,38 @@ async def deploy(request: DeployRequest):
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",     # Disable nginx buffering
         },
+    )
+
+
+async def iterate_stream(request: IterateRequest):
+    agent = HealAgent()
+    try:
+        async for thought in agent.iterate(
+            edit_request=request.edit_request,
+            source_code=request.source_code,
+            project_id=request.project_id,
+            runtime=request.runtime,
+            service_url=request.service_url or "",
+            brand_context=request.brand_context,
+            max_heal_attempts=request.max_heal_attempts,
+        ):
+            yield sse_event(thought.model_dump())
+        yield sse_event({"type": "done", "message": "Stream complete."}, event="done")
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        yield sse_event({"type": "error", "message": f"Iterate error: {repr(exc)}"}, event="error")
+    finally:
+        await agent._locus.close()
+        await agent._github.close()
+
+
+@app.post("/iterate")
+async def iterate(request: IterateRequest):
+    """Apply a natural-language edit to a deployed app and redeploy."""
+    return StreamingResponse(
+        iterate_stream(request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

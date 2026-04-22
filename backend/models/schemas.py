@@ -64,6 +64,16 @@ class LocusDeployPayload(BaseModel):
     region: Optional[str] = "us-east-1"
 
 
+class IterateRequest(BaseModel):
+    edit_request: str
+    source_code: Dict[str, str]
+    project_id: str
+    runtime: str
+    service_url: Optional[str] = ""
+    brand_context: Optional[BrandContext] = None
+    max_heal_attempts: int = 2
+
+
 class DeploymentResult(BaseModel):
     success: bool
     app_id: Optional[str] = None

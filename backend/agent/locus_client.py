@@ -153,25 +153,17 @@ class LocusClient:
         """
         await self.ensure_auth()
 
-        # Find the service to get service_id
-        svcs = await self._http.get("/services", params={"projectId": project_id})
-        self._raise_for_status(svcs)
-        services   = svcs.json().get("services", [])
-        service_id = services[0]["id"] if services else ""
-        service_url = services[0].get("url", "") if services else ""
-
         deployment_ids = await self._git_push(project_id, payload.source_code)
 
         if deployment_ids:
             deployment_id = deployment_ids[0]
         else:
-            deployment_id = await self._latest_deployment_id(service_id) if service_id else ""
+            deployment_id = await self._latest_deployment_by_project(project_id)
 
         return {
             "id":            project_id,
-            "service_id":    service_id,
             "deployment_id": deployment_id,
-            "url":           service_url,
+            "url":           "",
             "status":        "building",
         }
 
@@ -296,7 +288,7 @@ class LocusClient:
             ["git", "add", "."],
             ["git", "commit", "-m", "Deploy via Locus Phoenix"],
             ["git", "remote", "add", "locus", remote_url],
-            ["git", "push", "locus", "main"],
+            ["git", "push", "--force", "locus", "main"],
         ]
         output_lines = []
         for cmd in cmds:
@@ -319,6 +311,20 @@ class LocusClient:
         try:
             resp = await self._http.get(
                 "/deployments", params={"serviceId": service_id, "limit": 1}
+            )
+            if resp.status_code < 400:
+                deploys = resp.json().get("deployments", [])
+                if deploys:
+                    return deploys[0]["id"]
+        except Exception:
+            pass
+        return ""
+
+    async def _latest_deployment_by_project(self, project_id: str) -> str:
+        """Fallback: list deployments for a project and return the newest ID."""
+        try:
+            resp = await self._http.get(
+                "/deployments", params={"projectId": project_id, "limit": 1}
             )
             if resp.status_code < 400:
                 deploys = resp.json().get("deployments", [])

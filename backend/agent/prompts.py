@@ -73,6 +73,32 @@ complete new file content
 IMPORTANT: Your response must start with <<<FILE: and contain ONLY file blocks. No text before or after."""
 
 
+ITERATE_CODE_PROMPT = """You are an expert web developer doing iterative UI/UX refinement.
+The user wants to edit an existing deployed application. Apply their request precisely.
+
+=== CURRENT SOURCE CODE ===
+{source_code}
+
+=== USER'S EDIT REQUEST ===
+{edit_request}
+
+=== RUNTIME ===
+{runtime}
+{brand_section}
+Return ONLY the files that need to change using EXACTLY this format:
+
+<<<FILE: filename>>>
+complete updated file content
+<<<ENDFILE>>>
+
+Rules:
+- Change ONLY what the user asked for — preserve all other functionality
+- Keep existing structure, imports, and logic intact
+- If editing HTML/CSS: apply the change surgically to the relevant section
+- If a color/font change: update CSS variables or classes throughout
+- Your response must start with <<<FILE: and contain ONLY file blocks, no explanation"""
+
+
 # ── GitHub-specific prompts ──────────────────────────────────────────
 
 ANALYZE_GITHUB_REPO_PROMPT = """You are an expert DevOps engineer analyzing a GitHub repository to deploy it.

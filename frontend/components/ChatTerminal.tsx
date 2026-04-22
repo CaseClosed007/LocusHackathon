@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import React, {
   useState,
   useRef,
   useEffect,
@@ -14,6 +14,7 @@ import { AnimatedBackground } from "./AnimatedBackground";
 import { GitHubPreview } from "./GitHubPreview";
 import { CreditsModal } from "./CreditsModal";
 import { BrandUploader } from "./BrandUploader";
+import { IteratePanel } from "./IteratePanel";
 import { AgentThought, BrandContext } from "@/lib/types";
 
 // Detect if a string looks like a GitHub repo URL
@@ -146,10 +147,21 @@ function UserMessage({ text }: { text: string }) {
   );
 }
 
-function AgentPanel({ turn }: { turn: Turn }) {
+function AgentPanel({ turn, brandContext }: { turn: Turn; brandContext?: BrandContext | null }) {
   const lastThought = turn.thoughts[turn.thoughts.length - 1];
   const isSuccess = lastThought?.type === "success";
   const isError   = turn.thoughts.some((t) => t.type === "error") && !turn.isStreaming;
+
+  // Extract deploy context from thoughts for the iterate panel
+  const projectId  = isSuccess ? String(lastThought.metadata?.project_id  ?? "") : "";
+  const serviceUrl = isSuccess ? String(lastThought.metadata?.url          ?? "") : "";
+  const sourceCode = isSuccess ? lastThought.metadata?.files as Record<string, string> | undefined : undefined;
+  const runtime    = (turn.thoughts.find((t) => (t.metadata?.config as Record<string,unknown>)?.runtime)
+    ?.metadata?.config as Record<string, unknown>)?.runtime as string ?? "";
+
+  // State to track updated source after iterate edits
+  const [currentSource, setCurrentSource] = React.useState<Record<string, string> | undefined>(sourceCode);
+  React.useEffect(() => { if (sourceCode) setCurrentSource(sourceCode); }, [isSuccess]);
 
   return (
     <motion.div
@@ -271,6 +283,20 @@ function AgentPanel({ turn }: { turn: Turn }) {
           );
         })()}
       </div>
+
+      {/* Iterative editor — shown after a successful deployment */}
+      {isSuccess && !turn.isStreaming && projectId && currentSource && (
+        <IteratePanel
+          editContext={{
+            projectId,
+            sourceCode: currentSource,
+            runtime,
+            serviceUrl,
+            brandContext: brandContext ?? undefined,
+          }}
+          onSourceUpdated={setCurrentSource}
+        />
+      )}
     </motion.div>
   );
 }
@@ -545,7 +571,7 @@ export default function ChatTerminal() {
               >
                 <UserMessage text={turn.userMessage} />
                 {(turn.thoughts.length > 0 || turn.isStreaming) && (
-                  <AgentPanel turn={turn} />
+                  <AgentPanel turn={turn} brandContext={brandContext} />
                 )}
               </motion.div>
             ))}

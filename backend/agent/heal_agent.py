@@ -28,6 +28,7 @@ from .github_client import GitHubClient, parse_github_url
 from .prompts import (
     PARSE_DEPLOY_REQUEST_PROMPT,
     GENERATE_CODE_PROMPT,
+    ITERATE_CODE_PROMPT,
     DIAGNOSE_AND_HEAL_PROMPT,
     ANALYZE_GITHUB_REPO_PROMPT,
     ADAPT_FOR_LOCUS_PROMPT,
@@ -702,6 +703,147 @@ class HealAgent:
                 runtime=runtime,
             ),
             max_tokens=8192,
+        )
+        return _extract_files(text)
+
+    # ── Iterative editing ────────────────────────────────────────────────
+
+    async def iterate(
+        self,
+        edit_request: str,
+        source_code: Dict[str, str],
+        project_id: str,
+        runtime: str,
+        service_url: str = "",
+        brand_context: Optional[BrandContext] = None,
+        max_heal_attempts: int = 2,
+    ) -> AsyncGenerator[AgentThought, None]:
+        """Apply a natural-language edit to existing source code and redeploy."""
+
+        self._session["start_ts"] = time.time()
+
+        yield _thought("thought", f"Applying edit: _{edit_request}_")
+
+        # Build brand section (same logic as _generate_code)
+        brand_section = ""
+        if brand_context and brand_context.colors:
+            brand_section = (
+                "\n=== ACTIVE BRAND CONTEXT ===\n"
+                f"Company: {brand_context.company_name}\n"
+                f"Colors: {', '.join(brand_context.colors[:4])}\n"
+                f"Tone: {brand_context.tone}\n"
+            )
+
+        try:
+            patched = await self._iterate_code(
+                edit_request, source_code, runtime, brand_section
+            )
+        except Exception as exc:
+            yield _thought("error", f"Could not generate edit: {exc}")
+            return
+
+        changed = list(patched.keys())
+        merged  = {**source_code, **patched}
+        diff_data = {
+            f: _unified_diff(source_code.get(f, ""), patched[f], f)
+            for f in patched
+            if source_code.get(f, "") != patched.get(f, "")
+        }
+
+        yield _thought(
+            "healing",
+            f"Edit ready — modified: `{', '.join(changed)}`",
+            patched_files=changed,
+            files=merged,
+            diff=diff_data,
+        )
+
+        # Redeploy via git push to the existing project
+        yield _thought("action", "Redeploying with changes...")
+        payload = LocusDeployPayload(
+            name=project_id,
+            runtime=runtime,
+            start_command="",
+            source_code=merged,
+        )
+
+        try:
+            resp = await self._locus.redeploy(project_id, payload)
+        except LocusAPIError as exc:
+            yield _thought("error", f"Redeploy failed: {exc.detail}")
+            return
+
+        deployment_id = resp.get("deployment_id", "")
+        url           = resp.get("url", service_url)
+
+        if not deployment_id:
+            # No deployment ID — likely a static/git-only project; treat as done
+            yield _thought(
+                "success",
+                "Edit applied! Redeploy triggered.",
+                project_id=project_id,
+                url=url,
+                files=merged,
+            )
+            return
+
+        yield _thought(
+            "action",
+            f"Redeploy queued — `{deployment_id}` — this takes 3-7 min...",
+            deployment_id=deployment_id,
+        )
+
+        final_status = "unknown"
+        async for status_data in self._locus.poll_until_terminal(deployment_id):
+            final_status = status_data.get("status", "unknown").lower()
+            yield _thought("thought", f"Status: **{status_data.get('build_step', final_status)}**")
+
+        if final_status == "running":
+            elapsed = round(time.time() - self._session["start_ts"])
+            yield _thought(
+                "success",
+                f"Edit live!{' → ' + url if url else ''}",
+                project_id=project_id,
+                deployment_id=deployment_id,
+                url=url,
+                files=merged,
+                elapsed_s=elapsed,
+            )
+        else:
+            yield _thought("error", f"Redeploy ended with status: {final_status}")
+
+            # One auto-heal attempt for iterate failures
+            if max_heal_attempts > 0:
+                yield _thought("healing", "Auto-healing redeploy failure...")
+                try:
+                    logs = await self._locus.get_logs(deployment_id)
+                    healed = await self._diagnose_and_heal(logs, merged, runtime)
+                    merged = {**merged, **healed}
+                    payload.source_code = merged
+                    yield _thought("healing", f"Patch applied: `{', '.join(healed.keys())}`", files=merged)
+                    resp2 = await self._locus.redeploy(project_id, payload)
+                    yield _thought("action", f"Re-queued: `{resp2.get('deployment_id', '')}`")
+                except Exception as exc:
+                    yield _thought("error", f"Auto-heal failed: {exc}")
+
+    async def _iterate_code(
+        self,
+        edit_request: str,
+        source_code: Dict[str, str],
+        runtime: str,
+        brand_section: str = "",
+    ) -> Dict[str, str]:
+        # Trim each file to 6000 chars to stay within context window
+        trimmed = {k: v[:6000] + ("\n...(truncated)" if len(v) > 6000 else "")
+                   for k, v in source_code.items()}
+        text = await self._llm(
+            ITERATE_CODE_PROMPT.format(
+                source_code=json.dumps(trimmed, indent=2),
+                edit_request=edit_request,
+                runtime=runtime,
+                brand_section=brand_section,
+            ),
+            max_tokens=16000,
         )
         return _extract_files(text)
 
