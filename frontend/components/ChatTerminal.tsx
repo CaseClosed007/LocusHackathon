@@ -66,11 +66,13 @@ function Logo() {
   );
 }
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
 function LocusBalance() {
   const [balance, setBalance] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("http://localhost:8000/balance")
+    fetch(`${BACKEND_URL}/balance`)
       .then((r) => r.json())
       .then((d) => {
         const amt = d.balance ?? d.amount;
@@ -94,7 +96,7 @@ function WorkspaceChip() {
   const [wsId, setWsId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("http://localhost:8000/workspace")
+    fetch(`${BACKEND_URL}/workspace`)
       .then((r) => r.json())
       .then((d) => { if (d.workspace_id) setWsId(d.workspace_id); })
       .catch(() => {});
