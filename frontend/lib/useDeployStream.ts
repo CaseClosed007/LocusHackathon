@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from "react";
 import { AgentThought, BrandContext } from "./types";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://locushackathon-production.up.railway.app";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "https://locushackathon-production.up.railway.app").replace(/\/$/, "");
 
 export interface DeployOptions {
   naturalLanguageRequest: string;

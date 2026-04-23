@@ -66,7 +66,7 @@ function Logo() {
   );
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://locushackathon-production.up.railway.app";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "https://locushackathon-production.up.railway.app").replace(/\/$/, "");
 
 function LocusBalance() {
   const [balance, setBalance] = useState<string | null>(null);
