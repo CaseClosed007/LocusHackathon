@@ -4,7 +4,7 @@ import { useState, useRef, DragEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { BrandContext } from "@/lib/types";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://locushackathon-production.up.railway.app";
 
 interface Props {
   onBrandLoaded: (brand: BrandContext) => void;
