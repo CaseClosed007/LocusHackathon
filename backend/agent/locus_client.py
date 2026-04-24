@@ -119,7 +119,13 @@ class LocusClient:
         if deployment_ids:
             deployment_id = deployment_ids[0]
         else:
+            # Wait briefly for Locus to process the push before querying
+            await asyncio.sleep(5)
             deployment_id = await self._latest_deployment_by_project(project_id)
+
+        # Last resort: return project_id as stand-in so polling can try
+        if not deployment_id:
+            deployment_id = project_id
 
         return {
             "id":            project_id,

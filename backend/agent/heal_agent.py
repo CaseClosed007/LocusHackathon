@@ -477,8 +477,7 @@ class HealAgent:
             )
 
             if not deployment_id:
-                yield _thought("error", "Could not get deployment ID from Locus.")
-                return
+                yield _thought("thought", "No deployment ID yet — polling project for status...")
 
             final_status = "unknown"
             async for status_data in self._locus.poll_until_terminal(deployment_id):
