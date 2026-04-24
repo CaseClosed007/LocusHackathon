@@ -117,7 +117,7 @@ class LocusClient:
             "projectId":     project_id,
             "environmentId": env_id,
             "name":          "web",
-            "source":        {"type": "s3"},
+            "source":        {"type": "git"},
             "runtime":       {"port": payload.port or 8080, "cpu": 256, "memory": 512},
         }
         if payload.env_vars:
