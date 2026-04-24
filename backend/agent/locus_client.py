@@ -92,17 +92,19 @@ class LocusClient:
     async def deploy(self, payload: LocusDeployPayload) -> dict:
         """
         Full deploy flow for AI-generated source code:
-          create project → environment → service → git push → return deployment info
+          create project → environment → git push → return deployment info
         """
         await self.ensure_auth()
 
         # 1. Create project
         proj_resp = await self._http.post(
             "/projects",
-            json={"name": payload.name, "description": f"Auto-deployed by Locus Phoenix"},
+            json={"name": payload.name, "description": "Auto-deployed by Locus Phoenix"},
         )
         self._raise_for_status(proj_resp)
-        project_id = proj_resp.json()["id"]
+        project_data = proj_resp.json()
+        project_id   = project_data["id"]
+        service_url  = project_data.get("url", "")
 
         # 2. Create production environment
         env_resp = await self._http.post(
@@ -110,36 +112,17 @@ class LocusClient:
             json={"name": "production", "type": "production"},
         )
         self._raise_for_status(env_resp)
-        env_id = env_resp.json()["id"]
 
-        # 3. Create service (s3 source = git push / local upload)
-        svc_body = {
-            "projectId":     project_id,
-            "environmentId": env_id,
-            "name":          "web",
-            "runtime":       {"port": payload.port or 8080, "cpu": 256, "memory": 512},
-        }
-        if payload.env_vars:
-            svc_body["envVars"] = payload.env_vars
-
-        svc_resp = await self._http.post("/services", json=svc_body)
-        self._raise_for_status(svc_resp)
-        svc_data   = svc_resp.json()
-        service_id = svc_data["id"]
-        service_url = svc_data.get("url", "")
-
-        # 4. Git push source code → triggers deployment automatically
+        # 3. Git push source code → Locus auto-provisions service + triggers deployment
         deployment_ids = await self._git_push(project_id, payload.source_code)
 
-        # Prefer first deployment ID from git push output; fall back to listing
         if deployment_ids:
             deployment_id = deployment_ids[0]
         else:
-            deployment_id = await self._latest_deployment_id(service_id)
+            deployment_id = await self._latest_deployment_by_project(project_id)
 
         return {
             "id":            project_id,
-            "service_id":    service_id,
             "deployment_id": deployment_id,
             "url":           service_url,
             "status":        "building",
