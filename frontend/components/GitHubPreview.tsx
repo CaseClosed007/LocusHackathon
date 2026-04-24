@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "https://locushackathon-production.up.railway.app").replace(/\/$/, "");
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "https://locushackathon.onrender.com").replace(/\/$/, "");
 
 interface RepoMeta {
   owner: string;
